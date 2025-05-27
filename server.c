@@ -141,7 +141,7 @@ int handleClient(int client_socket) {
         while (fgets(fileBuffer, 1024 - strlen(responseBuffer), filePtr)) {
             strcat(responseBuffer, fileBuffer);
         }
-        
+
 
         (void) send(client_socket, responseBuffer, strlen(responseBuffer), 0);
         closesocket(client_socket);
