@@ -39,7 +39,7 @@ char *str_replace(char *testInput, char *replaceChar, char *replaceWith) {
     }
 
     int diffCharSize = lenWith - lenReplace;
-    temp = result = malloc(strlen(testInput) + 1 + diffCharSize * replaceCount); ///   attention point
+    temp = result = malloc(strlen(testInput) + 1 + diffCharSize * replaceCount);
 
     while (replaceCount--) {
         insertPoint = strstr(testInput, replaceChar);
