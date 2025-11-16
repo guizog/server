@@ -14,13 +14,32 @@
 #define CRLF "\r\n"
 #define SP " "
 #define ROOT_PATH "C:\\Users\\guizo\\CLionProjects\\server\\content"
+#define STATUS404 "Not found"
 
 
-struct Request {
+struct http_status_code {
+    int code;
+    char *text;
+}typedef http_status_code;
+
+struct http_request_line {
     char *method;
     char *pathUri;
     char *payload;
-}typedef Request;
+    char *version;
+}typedef http_request_line;
+
+struct http_response_line {
+    http_status_code statusCode;
+    char *payload;
+    char *version;
+}typedef http_response_line;
+
+http_status_code status_codes[] = {
+    {200, " OK"},
+    {400, " Bad Request"},
+    {404, " Not Found"}
+};
 
 
 char *str_replace(char *testInput, char *replaceChar, char *replaceWith) {
@@ -57,30 +76,82 @@ char *str_replace(char *testInput, char *replaceChar, char *replaceWith) {
     return result;
 }
 
-char *getPathFile(const Request *req) {
+char *getFilePath(const http_request_line *req) {
     char fileBuffer[1024];
-    char responseBuffer[1024] = "HTTP/1.0 200 OK \r\n\r\n";
-    char filePath[] = ROOT_PATH;
+    char buffer[1024] = "";
+    char filePath[256] = ROOT_PATH;
 
     char* fixedPath = str_replace(req->pathUri, "/", "\\");
     strcat(filePath, fixedPath);
     printf("replaced path: %s\n", filePath);
 
     FILE *filePtr = fopen(filePath, "r");
-    while (fgets(fileBuffer, 1024 - strlen(responseBuffer), filePtr)) {
-        strcat(responseBuffer, fileBuffer);
+    if (!filePtr) {
+        perror("fopen failed");
+        free(fixedPath);
+        return NULL;
+    }
+
+    while (fgets(fileBuffer, 1024 - strlen(buffer), filePtr)) {
+        strcat(buffer, fileBuffer);
     }
     free(fixedPath);
 
-    return strdup(responseBuffer);
+    return strdup(buffer);
 }
 
+char *getFile(const http_request_line *req) {
+    char filePath[256] = ROOT_PATH;
 
-Request *parseRequest(const char *buff, const size_t bufSize, char *delimiter) {
+    char* fixedPath = str_replace(req->pathUri, "/", "\\");
+    strcat(filePath, fixedPath);
+    printf("replaced path: %s\n", filePath);
+
+    FILE *filePtr = fopen(filePath, "r");
+    if (!filePtr) {
+        perror("fopen failed");
+        free(fixedPath);
+        return NULL;
+    }
+
+    size_t bufferSize = 4096;
+    size_t len = 0;
+    char* buffer = malloc(bufferSize);
+    if (!buffer) {
+        fclose(filePtr);
+        free(fixedPath);
+        return NULL;
+    }
+    buffer[0] = '\0';
+    char tempBuffer[1024];
+
+    while (fgets(tempBuffer, sizeof(tempBuffer), filePtr)) {
+        size_t tempLength = strlen(tempBuffer);
+        if (len + tempLength + 1 > bufferSize) {
+            bufferSize *= 2;
+            char* newBuffer = realloc(buffer, bufferSize);
+            if (!newBuffer) {
+                free(fixedPath);
+                free(buffer);
+                fclose(filePtr);
+                return NULL;
+            }
+            buffer = newBuffer;
+        }
+        strcat(buffer, tempBuffer);
+        len += tempLength;
+    }
+
+    fclose(filePtr);
+    free(fixedPath);
+    return buffer;
+}
+
+http_request_line *parseRequestLine(const char *buff, const size_t bufSize, char *delimiter) {
     char *copyBuffer = malloc(bufSize);
     if (!copyBuffer) return NULL;
 
-    Request *req = malloc(sizeof(Request));
+    http_request_line *req = malloc(sizeof(http_request_line));
     if (!req) {
         free(copyBuffer);
         return NULL;
@@ -106,12 +177,40 @@ Request *parseRequest(const char *buff, const size_t bufSize, char *delimiter) {
     return req;
 }
 
+void setStatusCode(http_response_line* resp, int statusCode) {
+    for (int i = 0; i < sizeof(status_codes)/sizeof(http_status_code); i++) {
+        http_status_code curr = status_codes[i];
+        if (curr.code == statusCode) {
+            resp->statusCode = curr;
+            return;
+        }
+    }
+}
+
+int buildResponsePayload(http_response_line* resp, char* fileBuffer) {
+    size_t fileLength = strlen(fileBuffer);
+
+    int codeDigits = snprintf(NULL, 0, "%d", resp->statusCode.code);
+    size_t headersLength = strlen(resp->version) + codeDigits + strlen(resp->statusCode.text);
+
+    //3 spaces + "\r\n\r\n" (4 chars) + null terminator
+    resp->payload = malloc(headersLength + fileLength + 3 + 4 + 1);
+    if (!resp->payload) {
+        perror("malloc failed");
+        return 1;
+    }
+    sprintf(resp->payload, "%s %d %s\r\n\r\n%s",
+            resp->version,
+            resp->statusCode.code,
+            resp->statusCode.text,
+            fileBuffer);
+
+    return 0;
+}
 
 int handleClient(int client_socket) {
     ssize_t socketRecv = 0;
     char buffer[1024];
-    const char *hello = "HTTP/1.0 200 OK \r\n\r\nHello, World!";
-
 
     while (1) {
         memset(buffer, 0, sizeof(buffer));
@@ -127,32 +226,43 @@ int handleClient(int client_socket) {
         }
 
         printf("REQUEST=> \n%s\n", buffer);
-        Request *parsedReq = parseRequest(buffer, sizeof(buffer), CRLF);
+        http_request_line *parsedReq = parseRequestLine(buffer, sizeof(buffer), CRLF);
+        http_response_line *response = malloc(sizeof(http_response_line));
 
-        char fileBuffer[1024];
-        char responseBuffer[1024] = "HTTP/1.0 200 OK \r\n\r\n";
-        char filePath[] = ROOT_PATH;
+        char* httpHeader = "HTTP/1.0";
+        const size_t initialLen = strlen(httpHeader);
+        char* responseBuffer = malloc(1024);
 
-        char* fixedPath = str_replace(parsedReq->pathUri, "/", "\\");
-        strcat(filePath, fixedPath);
-        printf("replaced path: %s\n", filePath);
+        response->version = httpHeader;
+        setStatusCode(response, 200);
 
-        FILE *filePtr = fopen(filePath, "r");
-        while (fgets(fileBuffer, 1024 - strlen(responseBuffer), filePtr)) {
-            strcat(responseBuffer, fileBuffer);
+        char* fileBuffer = getFile(parsedReq);
+        if (!fileBuffer) {
+            printf("getPathFile failed\n");
+
+            setStatusCode(response, 404);
+            buildResponsePayload(response, "");
+        }
+        else {
+            buildResponsePayload(response, fileBuffer);
         }
 
-
-        (void) send(client_socket, responseBuffer, strlen(responseBuffer), 0);
+        (void) send(client_socket, response->payload, strlen(response->payload), 0);
         closesocket(client_socket);
+
+        if (fileBuffer)
+            free(fileBuffer);
 
         free(parsedReq->pathUri);
         free(parsedReq->method);
         free(parsedReq);
+        free(responseBuffer);
+        free(response);
         break;
     }
     printf("####################################################\n");
 
+    // ReSharper disable once CppDFAMemoryLeak
     return 0;
 }
 
