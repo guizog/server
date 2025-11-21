@@ -3,7 +3,10 @@ project(server C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(server winsock.c
-        server.c)
+add_executable(server main.c
+        server.c
+        server.h
+        common.h
+        common.c)
 
 target_link_libraries(server ws2_32)

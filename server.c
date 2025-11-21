@@ -1,109 +1,27 @@
-#include <stdio.h>
-#include <stdbool.h>
+#include "server.h"
 
-//#include "winsock.h"
-
-//extern int winsock(void);
-
-#define _WIN32_WINNT 0x501
-
-#include <ws2tcpip.h>
-
-#define DEFAULT_BUFLEN 512
-#define DEFAULT_PORT "27015"
-#define CRLF "\r\n"
-#define SP " "
-#define ROOT_PATH "C:\\Users\\guizo\\CLionProjects\\server\\content"
-#define STATUS404 "Not found"
-
-
-struct http_status_code {
-    int code;
-    char *text;
-}typedef http_status_code;
-
-struct http_request_line {
-    char *method;
-    char *pathUri;
-    char *payload;
-    char *version;
-}typedef http_request_line;
-
-struct http_response_line {
-    http_status_code statusCode;
-    char *payload;
-    char *version;
-}typedef http_response_line;
-
-http_status_code status_codes[] = {
+const http_status_code status_codes[] = {
     {200, " OK"},
     {400, " Bad Request"},
     {404, " Not Found"}
 };
 
+char WORKING_DIR[1024];
+char CONTENT_DIR[1024];
 
-char *str_replace(char *testInput, char *replaceChar, char *replaceWith) {
-    char* temp;
-    char* insertPoint;
-    char* result;
-    int replaceCount;
-    int lenReplace = strlen(replaceChar);
-    int lenWith = strlen(replaceWith);
-    int lenFront;
-
-    insertPoint = testInput;
-    for (replaceCount = 0; (temp = strstr(insertPoint, "/")); replaceCount++) {
-        printf("replace count: %d\n", replaceCount);
-        insertPoint = temp + lenReplace;
-    }
-
-    int diffCharSize = lenWith - lenReplace;
-    temp = result = malloc(strlen(testInput) + 1 + diffCharSize * replaceCount);
-
-    while (replaceCount--) {
-        insertPoint = strstr(testInput, replaceChar);
-        lenFront = insertPoint - testInput;
-        temp = strncpy(temp, testInput, lenFront) + lenFront;
-        temp = strcpy(temp, replaceWith) + lenWith;
-        testInput += lenFront + lenReplace;
-    }
-    strcpy(temp, testInput);
-
-    for (int i = 0; result[i] != '\0'; i++) {
-        printf("char[%d] = '%c' (ASCII %d)\n", i, result[i], result[i]);
-    }
-
-    return result;
-}
-
-char *getFilePath(const http_request_line *req) {
-    char fileBuffer[1024];
-    char buffer[1024] = "";
-    char filePath[256] = ROOT_PATH;
+char *getFile(const http_request_line *req) {
+    char filePath[1024];
 
     char* fixedPath = str_replace(req->pathUri, "/", "\\");
-    strcat(filePath, fixedPath);
-    printf("replaced path: %s\n", filePath);
-
-    FILE *filePtr = fopen(filePath, "r");
-    if (!filePtr) {
-        perror("fopen failed");
-        free(fixedPath);
+    if (!fixedPath) {
         return NULL;
     }
 
-    while (fgets(fileBuffer, 1024 - strlen(buffer), filePtr)) {
-        strcat(buffer, fileBuffer);
+    if (strlen(fixedPath) + strlen(CONTENT_DIR) + 1 >= 1024) {
+        fprintf(stderr, "Path too long\n");
+        return NULL;
     }
-    free(fixedPath);
-
-    return strdup(buffer);
-}
-
-char *getFile(const http_request_line *req) {
-    char filePath[256] = ROOT_PATH;
-
-    char* fixedPath = str_replace(req->pathUri, "/", "\\");
+    strcpy(filePath, CONTENT_DIR);
     strcat(filePath, fixedPath);
     printf("replaced path: %s\n", filePath);
 
@@ -124,9 +42,11 @@ char *getFile(const http_request_line *req) {
     }
     buffer[0] = '\0';
     char tempBuffer[1024];
+    char *writePos = buffer;
 
     while (fgets(tempBuffer, sizeof(tempBuffer), filePtr)) {
         size_t tempLength = strlen(tempBuffer);
+
         if (len + tempLength + 1 > bufferSize) {
             bufferSize *= 2;
             char* newBuffer = realloc(buffer, bufferSize);
@@ -137,10 +57,15 @@ char *getFile(const http_request_line *req) {
                 return NULL;
             }
             buffer = newBuffer;
+            writePos = buffer + len;
         }
-        strcat(buffer, tempBuffer);
+
+        memcpy(writePos, tempBuffer, tempLength);
+        writePos += tempLength;
         len += tempLength;
     }
+
+    *writePos = '\0';
 
     fclose(filePtr);
     free(fixedPath);
@@ -177,14 +102,22 @@ http_request_line *parseRequestLine(const char *buff, const size_t bufSize, char
     return req;
 }
 
-void setStatusCode(http_response_line* resp, int statusCode) {
+void freeRequestLine(http_request_line* req) {
+    free(req->pathUri);
+    free(req->method);
+    free(req);
+}
+
+int setStatusCode(http_response_line* resp, int statusCode) {
     for (int i = 0; i < sizeof(status_codes)/sizeof(http_status_code); i++) {
         http_status_code curr = status_codes[i];
         if (curr.code == statusCode) {
             resp->statusCode = curr;
-            return;
+            return 0;
         }
     }
+
+    return 1;
 }
 
 int buildResponsePayload(http_response_line* resp, char* fileBuffer) {
@@ -208,67 +141,7 @@ int buildResponsePayload(http_response_line* resp, char* fileBuffer) {
     return 0;
 }
 
-int handleClient(int client_socket) {
-    ssize_t socketRecv = 0;
-    char buffer[1024];
-
-    while (1) {
-        memset(buffer, 0, sizeof(buffer));
-
-        socketRecv = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
-        if (socketRecv < 0) {
-            perror("recv(client)");
-            return -1;
-        }
-        if (socketRecv == 0) {
-            printf("connection closed gracefully\n");
-            break;
-        }
-
-        printf("REQUEST=> \n%s\n", buffer);
-        http_request_line *parsedReq = parseRequestLine(buffer, sizeof(buffer), CRLF);
-        http_response_line *response = malloc(sizeof(http_response_line));
-
-        char* httpHeader = "HTTP/1.0";
-        const size_t initialLen = strlen(httpHeader);
-        char* responseBuffer = malloc(1024);
-
-        response->version = httpHeader;
-        setStatusCode(response, 200);
-
-        char* fileBuffer = getFile(parsedReq);
-        if (!fileBuffer) {
-            printf("getPathFile failed\n");
-
-            setStatusCode(response, 404);
-            buildResponsePayload(response, "");
-        }
-        else {
-            buildResponsePayload(response, fileBuffer);
-        }
-
-        (void) send(client_socket, response->payload, strlen(response->payload), 0);
-        closesocket(client_socket);
-
-        if (fileBuffer)
-            free(fileBuffer);
-
-        free(parsedReq->pathUri);
-        free(parsedReq->method);
-        free(parsedReq);
-        free(responseBuffer);
-        free(response);
-        break;
-    }
-    printf("####################################################\n");
-
-    // ReSharper disable once CppDFAMemoryLeak
-    return 0;
-}
-
-int main(void) {
-    printf("test");
-
+int startServer() {
     struct addrinfo *addr_result = NULL, *ptr = NULL, hints;
     int tcpSocket;
     WSADATA wsaData;
@@ -348,8 +221,58 @@ int main(void) {
         handleClient(clientSocket);
         // TODO: handle errors from the handle_client function
     }
+}
 
+int handleClient(int client_socket) {
+    ssize_t socketRecv = 0;
+    char buffer[1024];
 
-    //winsock();
+    while (1) {
+        memset(buffer, 0, sizeof(buffer));
+
+        socketRecv = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
+        if (socketRecv < 0) {
+            perror("recv(client)");
+            return -1;
+        }
+        if (socketRecv == 0) {
+            printf("connection closed gracefully\n");
+            break;
+        }
+
+        printf("REQUEST=> \n%s\n", buffer);
+        http_request_line *parsedReq = parseRequestLine(buffer, sizeof(buffer), CRLF);
+        http_response_line *response = malloc(sizeof(http_response_line));
+
+        char* httpHeader = "HTTP/1.0";
+
+        response->version = httpHeader;
+        setStatusCode(response, 200);
+
+        char* fileBuffer = getFile(parsedReq);
+        if (!fileBuffer) {
+            printf("getPathFile failed\n");
+
+            setStatusCode(response, 404);
+            buildResponsePayload(response, "");
+        }
+        else {
+            buildResponsePayload(response, fileBuffer);
+        }
+
+        (void) send(client_socket, response->payload, strlen(response->payload), 0);
+        closesocket(client_socket);
+
+        if (fileBuffer)
+            free(fileBuffer);
+
+        freeRequestLine(parsedReq);
+        free(response);
+        break;
+    }
+
+    printf("####################################################\n");
+
+    // ReSharper disable once CppDFAMemoryLeak
     return 0;
 }
