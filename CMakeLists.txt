@@ -7,6 +7,12 @@ add_executable(server main.c
         server.c
         server.h
         common.h
-        common.c)
+        common.c
+        request.c
+        request.h
+        http_types.c
+        http_types.h
+        response.c
+        response.h)
 
 target_link_libraries(server ws2_32)
