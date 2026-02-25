@@ -1,11 +1,5 @@
 #include "server.h"
 
-const http_status_code status_codes[] = {
-    {200, " OK"},
-    {400, " Bad Request"},
-    {404, " Not Found"}
-};
-
 char WORKING_DIR[1024];
 char CONTENT_DIR[1024];
 
@@ -70,75 +64,6 @@ char *getFile(const http_request_line *req) {
     fclose(filePtr);
     free(fixedPath);
     return buffer;
-}
-
-http_request_line *parseRequestLine(const char *buff, const size_t bufSize, char *delimiter) {
-    char *copyBuffer = malloc(bufSize);
-    if (!copyBuffer) return NULL;
-
-    http_request_line *req = malloc(sizeof(http_request_line));
-    if (!req) {
-        free(copyBuffer);
-        return NULL;
-    }
-
-    char *saveptr1;
-    char *saveptr2;
-
-    memcpy(copyBuffer, buff, bufSize);
-    char *reqToken = strtok_r(copyBuffer, CRLF, &saveptr1);
-
-    req->method = strdup(strtok_r(reqToken, SP, &saveptr2));
-    req->pathUri = strdup(strtok_r(NULL, SP, &saveptr2));
-    printf("===>Method: %s\n", req->method);
-    printf("===>pathUri: %s\n", req->pathUri);
-
-    for (int i = 0; reqToken != NULL; i++) {
-        printf("=>token: %s\n", reqToken);
-        reqToken = strtok_r(NULL, CRLF, &saveptr1);
-    }
-
-    free(copyBuffer);
-    return req;
-}
-
-void freeRequestLine(http_request_line* req) {
-    free(req->pathUri);
-    free(req->method);
-    free(req);
-}
-
-int setStatusCode(http_response_line* resp, int statusCode) {
-    for (int i = 0; i < sizeof(status_codes)/sizeof(http_status_code); i++) {
-        http_status_code curr = status_codes[i];
-        if (curr.code == statusCode) {
-            resp->statusCode = curr;
-            return 0;
-        }
-    }
-
-    return 1;
-}
-
-int buildResponsePayload(http_response_line* resp, char* fileBuffer) {
-    size_t fileLength = strlen(fileBuffer);
-
-    int codeDigits = snprintf(NULL, 0, "%d", resp->statusCode.code);
-    size_t headersLength = strlen(resp->version) + codeDigits + strlen(resp->statusCode.text);
-
-    //3 spaces + "\r\n\r\n" (4 chars) + null terminator
-    resp->payload = malloc(headersLength + fileLength + 3 + 4 + 1);
-    if (!resp->payload) {
-        perror("malloc failed");
-        return 1;
-    }
-    sprintf(resp->payload, "%s %d %s\r\n\r\n%s",
-            resp->version,
-            resp->statusCode.code,
-            resp->statusCode.text,
-            fileBuffer);
-
-    return 0;
 }
 
 int startServer() {
