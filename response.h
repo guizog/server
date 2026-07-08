@@ -9,6 +9,6 @@
 #include "http_types.h"
 
 int setStatusCode(http_response_line* resp, int statusCode);
-int buildResponsePayload(http_response_line* resp, char* fileBuffer);
+int buildResponsePayload(http_response_line* resp, char *body, const size_t bodyLength, const char *contentType, const http_header *headers, const size_t headersCount);
 
 #endif //RESPONSE_H

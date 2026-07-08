@@ -9,6 +9,8 @@
 #include "http_types.h"
 #include "request.h"
 #include "response.h"
+#include <limits.h>
+#include <stdlib.h>
 
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
@@ -16,5 +18,6 @@
 
 int startServer();
 int handleClient(int);
+void *worker(void *arg);
 
 #endif //SERVER_H

@@ -13,6 +13,9 @@ add_executable(server main.c
         http_types.c
         http_types.h
         response.c
-        response.h)
+        response.h
+        job_queue.c
+        job_queue.h
+)
 
 target_link_libraries(server ws2_32)

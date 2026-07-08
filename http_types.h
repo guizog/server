@@ -33,8 +33,13 @@ struct http_request_line {
 
 struct http_response_line {
     http_status_code statusCode;
-    char *payload;
     char *version;
+
+    http_header *headers;
+    size_t headersCount;
+
+    char *payloadBody;
+    size_t payloadLength;
 }typedef http_response_line;
 
 extern const http_status_code status_codes[];

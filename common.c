@@ -3,36 +3,48 @@
 //
 #include "common.h"
 
-char *str_replace(char *testInput, char *replaceChar, char *replaceWith) {
-    char* temp;
-    char* insertPoint;
-    char* result;
-    int replaceCount;
-    int lenReplace = strlen(replaceChar);
-    int lenWith = strlen(replaceWith);
-    int lenFront;
+char *str_replace(const char *testInput, const char *replaceChar, const char *replaceWith){
+    if (!testInput || !replaceChar || !replaceWith)
+        return NULL;
 
-    insertPoint = testInput;
-    for (replaceCount = 0; (temp = strstr(insertPoint, "/")); replaceCount++) {
-        printf("replace count: %d\n", replaceCount);
+    size_t lenInput = strlen(testInput);
+    size_t lenReplace = strlen(replaceChar);
+    size_t lenWith = strlen(replaceWith);
+
+    if (lenReplace == 0)
+        return NULL;
+
+    size_t replaceCount = 0;
+    const char *insertPoint = testInput;
+    const char *temp;
+
+    while ((temp = strstr(insertPoint, replaceChar)) != NULL) {
+        replaceCount++;
         insertPoint = temp + lenReplace;
     }
 
-    int diffCharSize = lenWith - lenReplace;
-    temp = result = malloc(strlen(testInput) + 1 + diffCharSize * replaceCount);
+    size_t newSize = lenInput + replaceCount * (lenWith - lenReplace) + 1;
 
-    while (replaceCount--) {
-        insertPoint = strstr(testInput, replaceChar);
-        lenFront = insertPoint - testInput;
-        temp = strncpy(temp, testInput, lenFront) + lenFront;
-        temp = strcpy(temp, replaceWith) + lenWith;
-        testInput += lenFront + lenReplace;
-    }
-    strcpy(temp, testInput);
+    char *result = malloc(newSize);
+    if (!result)
+        return NULL;
 
-    for (int i = 0; result[i] != '\0'; i++) {
-        printf("char[%d] = '%c' (ASCII %d)\n", i, result[i], result[i]);
+    char *dest = result;
+    const char *src = testInput;
+
+    while ((insertPoint = strstr(src, replaceChar)) != NULL) {
+        size_t lenFront = insertPoint - src;
+
+        memcpy(dest, src, lenFront);
+        dest += lenFront;
+
+        memcpy(dest, replaceWith, lenWith);
+        dest += lenWith;
+
+        src = insertPoint + lenReplace;
     }
+
+    strcpy(dest, src);
 
     return result;
 }

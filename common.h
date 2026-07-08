@@ -11,6 +11,6 @@
 #include <stdbool.h>
 #include <libgen.h>
 
-char *str_replace(char *, char *, char *);
+char *str_replace(const char *, const char *, const char *);
 
 #endif //COMMON_H
