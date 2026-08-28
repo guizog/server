@@ -1,5 +1,6 @@
 #include "server.h"
 #include "job_queue.h"
+#include "clogger/logger.h"
 
 char WORKING_DIR[1024];
 char CONTENT_DIR[1024];
@@ -14,17 +15,16 @@ int initializeDirectory() {
         strcpy(WORKING_DIR, dir);
         snprintf(CONTENT_DIR, sizeof(CONTENT_DIR), "%s\\wwwcontent", WORKING_DIR);
 
-        printf("Root path: %s\nContent path: %s\n", WORKING_DIR, CONTENT_DIR);
+        writeLog(LOG_INFO, "Root path: %s\nContent path: %s\n", WORKING_DIR, CONTENT_DIR);
         return 0;
     }
-    perror("Error while initializing server directories");
+    writeLog(LOG_ERROR, "Error while initializing server directories");
     return 1;
 }
 
-char *getFile(const http_request_line *req, size_t *outSize) {
+char *getFile(const http_request_line *req, size_t *outSize, char **outType) {
     if (!req || !req->pathUri)
         return NULL;
-
 
     char tempPath[PATH_MAX];
     char resolvedPath[PATH_MAX];
@@ -32,7 +32,7 @@ char *getFile(const http_request_line *req, size_t *outSize) {
     snprintf(tempPath, sizeof(tempPath), "%s%s", CONTENT_DIR, req->pathUri);
 
     if (!_fullpath(resolvedPath, tempPath,  PATH_MAX)) {
-        perror("fullpath failed to process the generated file path");
+        writeLog(LOG_ERROR, "fullpath failed to process the generated file path");
         return NULL;
     }
 
@@ -53,7 +53,7 @@ char *getFile(const http_request_line *req, size_t *outSize) {
 
     FILE * filePtr = fopen(resolvedPath, "rb");
     if (!filePtr) {
-        perror("Failed to open file");
+        writeLog(LOG_ERROR, "Failed to open file");
         return NULL;
     }
 
@@ -72,7 +72,7 @@ char *getFile(const http_request_line *req, size_t *outSize) {
 
     char *buffer = malloc(fileSize);
     if (!buffer) {
-        perror("Failed to allocate buffer for file");
+        writeLog(LOG_ERROR, "Failed to allocate buffer for file");
         return NULL;
     }
 
@@ -84,11 +84,22 @@ char *getFile(const http_request_line *req, size_t *outSize) {
         return NULL;
     }
 
+    char *extensionDot = strrchr(resolvedPath, '.');
+    if (!extensionDot || extensionDot == resolvedPath) {
+        *outType = "bin";
+    }
+    else {
+        *outType = extensionDot + 1;
+    }
     *outSize = fileSize;
     return buffer;
 }
 
 int startServer() {
+    initializeDirectory();
+    startLogger(WORKING_DIR);
+
+
     struct addrinfo *addr_result = NULL, *ptr = NULL, hints;
     int tcpSocket;
     WSADATA wsaData;
@@ -97,11 +108,9 @@ int startServer() {
     // Initialize Winsock
     tcpSocket = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (tcpSocket != 0) {
-        printf("WSAStartup failed with error: %d\n", tcpSocket);
+        writeLog(LOG_ERROR, "WSAStartup failed with error: %d\n", tcpSocket);
         return 1;
     }
-
-    (void) setsockopt(tcpSocket, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
 
     ZeroMemory(&hints, sizeof(hints));
     hints.ai_family = AF_INET;
@@ -111,7 +120,7 @@ int startServer() {
 
     tcpSocket = getaddrinfo("127.0.0.1", DEFAULT_PORT, &hints, &addr_result);
     if (tcpSocket != 0) {
-        printf("getaddrinfo failed: %f\n");
+        writeLog(LOG_ERROR, "getaddrinfo failed: %d", tcpSocket);
         WSACleanup();
         return 1;
     }
@@ -120,33 +129,34 @@ int startServer() {
     SOCKET listenSocket = INVALID_SOCKET;
     listenSocket = socket(addr_result->ai_family, addr_result->ai_socktype, addr_result->ai_protocol);
     if (listenSocket == INVALID_SOCKET) {
-        printf("error at socket(): %ld\n", WSAGetLastError());
+        writeLog(LOG_ERROR, "error at socket(): %ld\n", WSAGetLastError());
         freeaddrinfo(addr_result);
         WSACleanup();
         return 1;
     }
-    printf("socket created\n");
+    writeLog(LOG_INFO,"socket created");
+    setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, (const char*)&enabled, sizeof(enabled));
 
     tcpSocket = bind(listenSocket, addr_result->ai_addr, (int) addr_result->ai_addrlen);
     if (tcpSocket == SOCKET_ERROR) {
-        printf("bind failed with error: %d\n", WSAGetLastError());
+        writeLog(LOG_ERROR, "bind failed with error: %d\n", WSAGetLastError());
         freeaddrinfo(addr_result);
         WSACleanup();
         return 1;
     }
 
-    printf("socket bind\n");
+    writeLog(LOG_INFO, "socket bind");
+
     //result variable is no longer needed after the binding, so memory is freed
     freeaddrinfo(addr_result);
 
     if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
-        printf("Listen failed with error: %ld\n", WSAGetLastError());
+        writeLog(LOG_ERROR, "Listen failed with error: %ld", WSAGetLastError());
         closesocket(listenSocket);
         WSACleanup();
         return 1;
     }
-    printf("socket listening for connections\n");
-    initializeDirectory();
+    writeLog(LOG_INFO, "socket listening for connections");
 
     queue_init(&queue);
 
@@ -159,14 +169,11 @@ int startServer() {
         SOCKET clientSocket = INVALID_SOCKET;
         clientSocket = accept(listenSocket, NULL, NULL);
         if (clientSocket == INVALID_SOCKET) {
-            printf("accept failed with error: %d\n", WSAGetLastError());
-            closesocket(listenSocket);
-            WSACleanup();
-            return 1;
+            writeLog(LOG_ERROR, "accept failed with error: %d", WSAGetLastError());
+            continue;
         }
-        printf("connection accepted \n");
 
-        //handleClient(clientSocket);
+        writeLog(LOG_INFO, "connection accepted");
         enqueue(&queue, clientSocket);
     }
 }
@@ -195,82 +202,142 @@ void *worker(void *arg) {
 }
 
 int isRequestComplete(char *buffer, size_t len) {
-    char *bodyStart = strstr(buffer, CRLF);
-    if (bodyStart == NULL) return 0;
+    if (len < 4)
+        return 0;
 
+    char *headerEnd = strstr(buffer, "\r\n\r\n");
+    if (headerEnd == NULL)
+        return 0;
+
+    size_t headerSize = (size_t) (headerEnd - buffer) + 4;
+
+    char saved = *headerEnd;
+    *headerEnd = '\0';
     char *cl = strstr(buffer, "Content-Length:");
-    if (cl == NULL) return 1; // no body present
+    *headerEnd = saved;
 
-    int contentLength = atoi(cl + strlen("Content-Length:"));
+    if (cl == NULL)
+        return 1;
 
-    size_t headerSize = bodyStart - buffer;
+    unsigned long contentLength = strtoul(cl + strlen("Content-Length:"), NULL, 10);
     size_t bodyReceived = len - headerSize;
 
-    return bodyReceived >= (size_t)contentLength;
+    return bodyReceived >= contentLength;
+}
+
+static int sendAll(SOCKET sock, const char *data, size_t len) {
+    size_t sent = 0;
+
+    while (sent < len) {
+        int bytes = send(sock, data + sent, (int) (len - sent), 0);
+        if (bytes <= 0)
+            return -1;
+        sent += (size_t) bytes;
+    }
+
+    return 0;
 }
 
 int handleClient(int client_socket) {
-    ssize_t socketRecv = 0;
     size_t capacity = 4096;
     size_t length = 0;
-    char* buffer = malloc(capacity);
-    int receiveComplete = 0;
-    memset(buffer, 0, sizeof(buffer));
-
+    char *buffer = malloc(capacity);
+    if (!buffer) {
+        writeLog(LOG_ERROR, "Failed to allocate request buffer");
+        return -1;
+    }
 
     while (1) {
-        if (length >= capacity) {
-            capacity *= 2;
-            buffer = realloc(buffer, capacity);
+        if (length + 1 >= capacity) {
+            if (capacity >= MAX_REQUEST_SIZE) {
+                writeLog(LOG_ERROR, "Request exceeds maximum size");
+                free(buffer);
+                return -1;
+            }
+
+            size_t newCapacity = capacity * 2;
+            if (newCapacity > MAX_REQUEST_SIZE)
+                newCapacity = MAX_REQUEST_SIZE;
+
+            char *resized = realloc(buffer, newCapacity);
+            if (!resized) {
+                writeLog(LOG_ERROR, "Failed to grow request buffer");
+                free(buffer);
+                return -1;
+            }
+            buffer = resized;
+            capacity = newCapacity;
         }
 
-        int bytes = recv(client_socket, buffer + length, capacity - length, 0);
+        int bytes = recv(client_socket, buffer + length, (int) (capacity - length - 1), 0);
         if (bytes < 0) {
-            perror("recv(client)");
+            writeLog(LOG_ERROR, "recv(client)");
             free(buffer);
             return -1;
         }
         if (bytes == 0) {
-            printf("connection closed gracefully\n");
+            writeLog(LOG_INFO, "connection closed gracefully");
             break;
         }
 
-        length += bytes;
+        length += (size_t) bytes;
+        buffer[length] = '\0';
 
         if (isRequestComplete(buffer, length))
             break;
     }
 
-    printf("REQUEST=> \n%s\n", buffer);
-    http_request_line *parsedReq = parseRequestLine(buffer, socketRecv, CRLF);
-    http_response_line *response = malloc(sizeof(http_response_line));
+    if (length == 0) {
+        free(buffer);
+        return 0;
+    }
 
-    char* httpHeader = "HTTP/1.0";
+    writeLog(LOG_DEBUG, "REQUEST=> %s", buffer);
 
-    response->version = httpHeader;
-    setStatusCode(response, 200);
+    http_request_line *parsedReq = parseRequestLine(buffer, length, CRLF);
+    http_response_line *response = calloc(1, sizeof(http_response_line));
+    if (!response) {
+        freeRequestLine(parsedReq);
+        free(buffer);
+        return -1;
+    }
 
-    size_t  fileLength = 0;
-    char* fileBuffer = getFile(parsedReq, &fileLength);
-    if (!fileBuffer) {
-        printf("getPathFile failed\n");
+    response->version = "HTTP/1.0";
 
-        setStatusCode(response, 404);
-        buildResponsePayload(response, "", 0, NULL, NULL, 0);
+    size_t fileLength = 0;
+    char *fileType = NULL;
+    char *fileBuffer = NULL;
+
+    if (!parsedReq) {
+        writeLog(LOG_ERROR, "Failed to parse request");
+        setStatusCode(response, 400);
+        buildResponsePayload(response, "", 0, "html", NULL, 0);
     }
     else {
-        buildResponsePayload(response, fileBuffer, fileLength, "text/html", NULL, 0);
+        setStatusCode(response, 200);
+        fileBuffer = getFile(parsedReq, &fileLength, &fileType);
+        if (!fileBuffer) {
+            writeLog(LOG_ERROR, "getPathFile failed");
+            setStatusCode(response, 404);
+            buildResponsePayload(response, "", 0, "html", NULL, 0);
+        }
+        else {
+            writeLog(LOG_DEBUG, "file type being read: %s", fileType);
+            buildResponsePayload(response, fileBuffer, fileLength, fileType, NULL, 0);
+        }
     }
 
-    (void) send(client_socket, response->payloadBody, response->payloadLength, 0);
-    closesocket(client_socket);
+    if (response->payloadBody && response->payloadLength > 0) {
+        if (sendAll((SOCKET) client_socket, response->payloadBody, response->payloadLength) != 0) {
+            writeLog(LOG_ERROR, "send(client) failed");
+        }
+    }
 
-    if (fileBuffer)
-        free(fileBuffer);
-
+    free(fileBuffer);
     freeRequestLine(parsedReq);
+    freeResponseLine(response);
     free(response);
+    free(buffer);
 
-    // ReSharper disable once CppDFAMemoryLeak
     return 0;
 }

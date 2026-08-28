@@ -14,6 +14,7 @@
 
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
+#define MAX_REQUEST_SIZE (1024 * 1024)
 #define _WIN32_WINNT 0x501
 
 int startServer();

@@ -3,6 +3,7 @@
 //
 
 #include "job_queue.h"
+#include "common.h"
 
 job_queue_t queue;
 
@@ -15,7 +16,7 @@ void queue_init(job_queue_t *q) {
 }
 
 void enqueue(job_queue_t *q, int client_fd) {
-    job_t *job = malloc(sizeof(job));
+    job_t *job = malloc(sizeof(*job));
     if (!job) return;
 
     job->client_fd = client_fd;
@@ -25,7 +26,7 @@ void enqueue(job_queue_t *q, int client_fd) {
 
     if (q->size >= QUEUE_LIMIT) {
         pthread_mutex_unlock(&q->mutex);
-        close(client_fd);
+        closesocket((SOCKET) client_fd);
         free(job);
         return;
     }

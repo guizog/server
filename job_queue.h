@@ -5,6 +5,7 @@
 
 #include <pthread.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #define THREAD_COUNT 4
 #define QUEUE_LIMIT 1024

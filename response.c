@@ -3,6 +3,7 @@
 //
 
 #include "response.h"
+#include <string.h>
 
 int setStatusCode(http_response_line* resp, int statusCode) {
     for (int i = 0; i < STATUS_CODES_COUNT; i++) {
@@ -12,16 +13,26 @@ int setStatusCode(http_response_line* resp, int statusCode) {
             return 0;
         }
     }
-
     return 1;
+}
+
+const char *getMimeType(const char *contentType) {
+    if (!contentType)
+        return "application/octet-stream";
+    if (strchr(contentType, '/'))
+        return contentType;
+    if (strcmp(contentType, "html") == 0)
+        return "text/html";
+    if (strcmp(contentType, "json") == 0)
+        return "application/json";
+    return "application/octet-stream";
 }
 
 int buildResponsePayload(http_response_line* resp, char *body, const size_t bodyLength, const char *contentType, const http_header *headers, const size_t headersCount) {
     if (!resp || !resp->statusCode.text)
         return 1;
 
-    if (!contentType)
-        contentType = "application/octet-stream";
+    contentType = getMimeType(contentType);
 
     int totalSize = 0;
     totalSize += snprintf(NULL, 0, "%s %d %s\r\n", resp->version, resp->statusCode.code, resp->statusCode.text);
@@ -84,4 +95,21 @@ int buildResponsePayload(http_response_line* resp, char *body, const size_t body
     resp->payloadBody[offset] = '\0';
     resp->payloadLength = offset;
     return 0;
+}
+
+void freeResponseLine(http_response_line *resp) {
+    if (!resp)
+        return;
+
+    free(resp->payloadBody);
+    resp->payloadBody = NULL;
+
+    if (resp->headers) {
+        for (size_t i = 0; i < resp->headersCount; i++) {
+            free(resp->headers[i].name);
+            free(resp->headers[i].value);
+        }
+        free(resp->headers);
+        resp->headers = NULL;
+    }
 }

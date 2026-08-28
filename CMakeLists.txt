@@ -16,6 +16,8 @@ add_executable(server main.c
         response.h
         job_queue.c
         job_queue.h
+        clogger/logger.c
+        clogger/logger.h
 )
 
 target_link_libraries(server ws2_32)
